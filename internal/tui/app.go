@@ -92,7 +92,10 @@ func (app *App) setupUI() {
 	// Create log view
 	app.logView = tview.NewTextView().
 		SetDynamicColors(true).
-		SetScrollable(true)
+		SetScrollable(true).
+		SetChangedFunc(func() {
+			app.app.Draw()
+		})
 	app.logView.SetBorder(true).SetTitle(" Log ")
 
 	// Layout: device list on left, file browser on right, log at bottom
@@ -180,6 +183,7 @@ func (app *App) setupUI() {
 
 // Run starts the application
 func (app *App) Run() error {
+	app.app.SetRoot(app.pages, true)
 	app.app.SetFocus(app.deviceList)
 	app.refreshDeviceList()
 	return app.app.Run()
@@ -424,17 +428,29 @@ func (app *App) downloadFile(file FileInfo) {
 }
 
 func (app *App) log(message string) {
+	if message == "" {
+		return
+	}
+	app.mu.RLock()
+	if app.quitting {
+		app.mu.RUnlock()
+		return
+	}
+	app.mu.RUnlock()
+
 	timestamp := time.Now().Format("15:04:05")
-	// Use thread-safe approach for tview
+	fmt.Fprintf(app.logView, "[%s] %s\n", timestamp, message)
+	
+	// Scroll to end to ensure visibility of new logs
 	app.app.QueueUpdateDraw(func() {
-		app.logView.Write([]byte(fmt.Sprintf("[%s] %s\n", timestamp, message)))
-		// Scroll to bottom
 		app.logView.ScrollToEnd()
 	})
 }
 
 func (app *App) quit() {
+	app.mu.Lock()
 	app.quitting = true
+	app.mu.Unlock()
 	app.app.Stop()
 }
 
