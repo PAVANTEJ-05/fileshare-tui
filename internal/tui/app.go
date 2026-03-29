@@ -35,6 +35,7 @@ type App struct {
 	currentPath   string
 	files         []FileInfo
 
+	logChan  chan string
 	modal    *tview.Modal
 	quitting bool
 	mu       sync.RWMutex
@@ -46,6 +47,7 @@ func NewApp(registry *discovery.DeviceRegistry) *App {
 		app:      tview.NewApplication(),
 		pages:    tview.NewPages(),
 		registry: registry,
+		logChan:  make(chan string, 100),
 	}
 
 	app.setupUI()
@@ -92,10 +94,7 @@ func (app *App) setupUI() {
 	// Create log view
 	app.logView = tview.NewTextView().
 		SetDynamicColors(true).
-		SetScrollable(true).
-		SetChangedFunc(func() {
-			app.app.Draw()
-		})
+		SetScrollable(true)
 	app.logView.SetBorder(true).SetTitle(" Log ")
 
 	// Layout: device list on left, file browser on right, log at bottom
@@ -128,7 +127,7 @@ func (app *App) setupUI() {
 		case tcell.KeyRune:
 			switch event.Rune() {
 			case 'r':
-				app.refreshDevices()
+				go app.refreshDevices()
 				return nil
 			}
 		}
@@ -183,9 +182,15 @@ func (app *App) setupUI() {
 
 // Run starts the application
 func (app *App) Run() error {
+	// Start log consumer
+	go app.consumeLogs()
+
 	app.app.SetRoot(app.pages, true)
 	app.app.SetFocus(app.deviceList)
-	app.refreshDeviceList()
+	
+	// Initial refresh in background
+	go app.refreshDevices()
+	
 	return app.app.Run()
 }
 
@@ -194,27 +199,40 @@ func (app *App) Stop() {
 	app.app.Stop()
 }
 
+func (app *App) consumeLogs() {
+	for message := range app.logChan {
+		msg := message
+		app.app.QueueUpdateDraw(func() {
+			timestamp := time.Now().Format("15:04:05")
+			fmt.Fprintf(app.logView, "[%s] %s\n", timestamp, msg)
+			app.logView.ScrollToEnd()
+		})
+	}
+}
+
 // refreshDeviceList updates the device list from the registry
 func (app *App) refreshDeviceList() {
-	app.deviceList.Clear()
 	devices := app.registry.GetAll()
 
-	if len(devices) == 0 {
-		app.deviceList.AddItem("No devices found", "Press 'r' to refresh", 0, nil)
-		return
-	}
+	app.app.QueueUpdateDraw(func() {
+		app.deviceList.Clear()
+		if len(devices) == 0 {
+			app.deviceList.AddItem("No devices found", "Press 'r' to refresh", 0, nil)
+			return
+		}
 
-	for _, device := range devices {
-		d := device
-		app.deviceList.AddItem(
-			fmt.Sprintf("%s", device.HostName),
-			fmt.Sprintf("%s:%d - %s", device.Addr, device.Port, device.SharedDir),
-			0,
-			func() {
-				app.currentDevice = d
-			},
-		)
-	}
+		for _, device := range devices {
+			d := device
+			app.deviceList.AddItem(
+				fmt.Sprintf("%s", device.HostName),
+				fmt.Sprintf("%s:%d - %s", device.Addr, device.Port, device.SharedDir),
+				0,
+				func() {
+					app.currentDevice = d
+				},
+			)
+		}
+	})
 }
 
 func (app *App) refreshDevices() {
@@ -224,15 +242,13 @@ func (app *App) refreshDevices() {
 
 func (app *App) onDeviceSelected() {
 	index := app.deviceList.GetCurrentItem()
-	if index >= 0 && index < len(app.registry.GetAll()) {
-		devices := app.registry.GetAll()
-		if index < len(devices) {
-			app.currentDevice = devices[index]
-			app.currentPath = ""
-			app.loadFiles()
-			app.app.SetFocus(app.fileBrowser)
-			app.log(fmt.Sprintf("Connected to %s", app.currentDevice.HostName))
-		}
+	devices := app.registry.GetAll()
+	if index >= 0 && index < len(devices) {
+		app.currentDevice = devices[index]
+		app.currentPath = ""
+		app.loadFiles()
+		app.app.SetFocus(app.fileBrowser)
+		app.log(fmt.Sprintf("Connected to %s", app.currentDevice.HostName))
 	}
 }
 
@@ -438,19 +454,26 @@ func (app *App) log(message string) {
 	}
 	app.mu.RUnlock()
 
-	timestamp := time.Now().Format("15:04:05")
-	fmt.Fprintf(app.logView, "[%s] %s\n", timestamp, message)
-	
-	// Scroll to end to ensure visibility of new logs
-	app.app.QueueUpdateDraw(func() {
-		app.logView.ScrollToEnd()
-	})
+	// Non-blocking send to log channel
+	select {
+	case app.logChan <- message:
+	default:
+		// Drop log if channel is full to avoid deadlock
+	}
 }
 
 func (app *App) quit() {
 	app.mu.Lock()
+	if app.quitting {
+		app.mu.Unlock()
+		return
+	}
 	app.quitting = true
 	app.mu.Unlock()
+	
+	// Close log channel
+	close(app.logChan)
+	
 	app.app.Stop()
 }
 
@@ -495,9 +518,7 @@ func (app *App) RefreshDevices(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			app.app.QueueUpdateDraw(func() {
-				app.refreshDeviceList()
-			})
+			go app.refreshDevices()
 		}
 	}
 }
