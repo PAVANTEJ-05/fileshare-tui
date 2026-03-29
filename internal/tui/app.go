@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,10 +156,14 @@ func (app *App) setupUI() {
 
 	// Global shortcuts
 	app.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		switch event.Key() {
-		case tcell.KeyRune:
+		if event.Key() == tcell.KeyCtrlC {
+			app.quit()
+			return nil
+		}
+		
+		if event.Key() == tcell.KeyRune {
 			switch event.Rune() {
-			case 'q':
+			case 'q', 'Q':
 				app.quit()
 				return nil
 			case '1':
@@ -244,39 +249,67 @@ func (app *App) loadFiles() {
 		SetTextColor(tcell.ColorYellow).
 		SetSelectable(false))
 
+	// Display loading message
+	app.fileBrowser.SetCell(1, 0, tview.NewTableCell("Loading...").
+		SetTextColor(tcell.ColorWhite))
+
 	cli := client.NewDeviceClient(app.currentDevice.Addr, app.currentDevice.Port)
-	files, err := cli.ListFiles(app.currentPath)
-	if err != nil {
-		app.log(fmt.Sprintf("Error loading files: %v", err))
-		return
-	}
+	
+	// Load files in background to avoid blocking the UI
+	go func() {
+		files, err := cli.ListFiles(app.currentPath)
+		
+		app.app.QueueUpdateDraw(func() {
+			if err != nil {
+				app.log(fmt.Sprintf("Error loading files: %v", err))
+				app.fileBrowser.Clear()
+				app.fileBrowser.SetCell(0, 0, tview.NewTableCell("Name").
+					SetTextColor(tcell.ColorYellow).
+					SetSelectable(false))
+				app.fileBrowser.SetCell(1, 0, tview.NewTableCell(fmt.Sprintf("[red]Error: %v", err)))
+				return
+			}
 
-	app.mu.Lock()
-	app.files = make([]FileInfo, len(files))
-	copy(app.files, files)
-	app.mu.Unlock()
+			app.mu.Lock()
+			app.files = make([]FileInfo, len(files))
+			copy(app.files, files)
+			app.mu.Unlock()
 
-	for i, file := range files {
-		row := i + 1
-		icon := "[white]"
-		if file.IsDir {
-			icon = "[cyan]"
-		}
+			app.fileBrowser.Clear()
+			// Re-create header
+			app.fileBrowser.SetCell(0, 0, tview.NewTableCell("Name").
+				SetTextColor(tcell.ColorYellow).
+				SetSelectable(false))
+			app.fileBrowser.SetCell(0, 1, tview.NewTableCell("Size").
+				SetTextColor(tcell.ColorYellow).
+				SetSelectable(false))
+			app.fileBrowser.SetCell(0, 2, tview.NewTableCell("Modified").
+				SetTextColor(tcell.ColorYellow).
+				SetSelectable(false))
 
-		app.fileBrowser.SetCell(row, 0,
-			tview.NewTableCell(fmt.Sprintf("%s%s", icon, file.Name)).
-				SetTextColor(tcell.ColorDefault))
-		app.fileBrowser.SetCell(row, 1,
-			tview.NewTableCell(formatSize(file.Size)))
-		app.fileBrowser.SetCell(row, 2,
-			tview.NewTableCell(formatTime(file.ModTime)))
-	}
+			for i, file := range files {
+				row := i + 1
+				icon := "[white]"
+				if file.IsDir {
+					icon = "[cyan]"
+				}
 
-	title := " Files "
-	if app.currentPath != "" {
-		title = fmt.Sprintf(" Files - /%s ", app.currentPath)
-	}
-	app.fileBrowser.SetTitle(title)
+				app.fileBrowser.SetCell(row, 0,
+					tview.NewTableCell(fmt.Sprintf("%s%s", icon, file.Name)).
+						SetTextColor(tcell.ColorDefault))
+				app.fileBrowser.SetCell(row, 1,
+					tview.NewTableCell(formatSize(file.Size)))
+				app.fileBrowser.SetCell(row, 2,
+					tview.NewTableCell(formatTime(file.ModTime)))
+			}
+
+			title := " Files "
+			if app.currentPath != "" {
+				title = fmt.Sprintf(" Files - /%s ", app.currentPath)
+			}
+			app.fileBrowser.SetTitle(title)
+		})
+	}()
 }
 
 func (app *App) onFileSelected() {
@@ -453,10 +486,16 @@ func (app *App) RefreshDevices(ctx context.Context) {
 	}
 }
 
-// LogWriter returns a function that can be used as a log writer
-func (app *App) LogWriter() func([]byte) (int, error) {
-	return func(p []byte) (int, error) {
-		app.log(strings.TrimSpace(string(p)))
-		return len(p), nil
-	}
+// LogWriter returns an io.Writer that redirects logs to the log view
+func (app *App) LogWriter() io.Writer {
+	return &tuiLogWriter{app: app}
+}
+
+type tuiLogWriter struct {
+	app *App
+}
+
+func (w *tuiLogWriter) Write(p []byte) (int, error) {
+	w.app.log(strings.TrimSpace(string(p)))
+	return len(p), nil
 }

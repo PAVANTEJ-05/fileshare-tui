@@ -112,6 +112,19 @@ func main() {
 	// Create and run TUI
 	log.Println("Starting TUI...")
 	app := tui.NewApp(registry)
+
+	// Redirect logs to TUI log view
+	log.SetOutput(app.LogWriter())
+
+	// Start periodic refresh in a goroutine
+	go app.RefreshDevices(ctx)
+
+	// Stop TUI when context is cancelled
+	go func() {
+		<-ctx.Done()
+		app.Stop()
+	}()
+
 	if err := app.Run(); err != nil {
 		log.Fatalf("TUI error: %v", err)
 	}
