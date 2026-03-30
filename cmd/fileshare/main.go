@@ -42,12 +42,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Set up signal handling
+	// Set up signal handling — only SIGTERM, NOT SIGINT.
+	// tview needs to receive SIGINT (Ctrl+C) directly via its own
+	// event loop so it can clean up the terminal properly.
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGTERM)
 	go func() {
-		sig := <-sigChan
-		log.Printf("Received signal %v, shutting down...", sig)
+		<-sigChan
 		cancel()
 	}()
 

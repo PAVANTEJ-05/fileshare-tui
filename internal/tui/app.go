@@ -39,6 +39,7 @@ type App struct {
 	modal    *tview.Modal
 	quitting bool
 	mu       sync.RWMutex
+	quitOnce sync.Once
 }
 
 // NewApp creates a new TUI application
@@ -140,8 +141,11 @@ func (app *App) setupUI() {
 		case tcell.KeyEnter:
 			app.onFileSelected()
 			return nil
-		case tcell.KeyBackspace, tcell.KeyEscape:
+		case tcell.KeyBackspace, tcell.KeyBackspace2, tcell.KeyEscape:
 			app.navigateUp()
+			return nil
+		case tcell.KeyTab:
+			app.app.SetFocus(app.deviceList)
 			return nil
 		case tcell.KeyRune:
 			switch event.Rune() {
@@ -158,12 +162,19 @@ func (app *App) setupUI() {
 
 	// Global shortcuts
 	app.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyCtrlC {
+		switch event.Key() {
+		case tcell.KeyCtrlC:
 			app.quit()
 			return nil
-		}
-		
-		if event.Key() == tcell.KeyRune {
+		case tcell.KeyTab:
+			// Toggle focus between device list and file browser
+			if app.app.GetFocus() == app.deviceList {
+				app.app.SetFocus(app.fileBrowser)
+			} else {
+				app.app.SetFocus(app.deviceList)
+			}
+			return nil
+		case tcell.KeyRune:
 			switch event.Rune() {
 			case 'q', 'Q':
 				app.quit()
@@ -202,11 +213,15 @@ func (app *App) Stop() {
 func (app *App) consumeLogs() {
 	for message := range app.logChan {
 		msg := message
-		app.app.QueueUpdateDraw(func() {
+		// Use QueueUpdate (not QueueUpdateDraw) to avoid deadlock.
+		// QueueUpdateDraw tries to acquire the draw lock; if the event
+		// loop is already holding it (processing a key), we deadlock.
+		app.app.QueueUpdate(func() {
 			timestamp := time.Now().Format("15:04:05")
 			fmt.Fprintf(app.logView, "[%s] %s\n", timestamp, msg)
 			app.logView.ScrollToEnd()
 		})
+		app.app.Draw()
 	}
 }
 
@@ -463,18 +478,16 @@ func (app *App) log(message string) {
 }
 
 func (app *App) quit() {
-	app.mu.Lock()
-	if app.quitting {
+	app.quitOnce.Do(func() {
+		app.mu.Lock()
+		app.quitting = true
 		app.mu.Unlock()
-		return
-	}
-	app.quitting = true
-	app.mu.Unlock()
-	
-	// Close log channel
-	close(app.logChan)
-	
-	app.app.Stop()
+
+		// Close log channel safely (only once)
+		close(app.logChan)
+
+		app.app.Stop()
+	})
 }
 
 // Helper functions
