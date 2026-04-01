@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"fileshare/internal/server"
@@ -33,8 +35,8 @@ func NewDeviceClient(addr string, port int) *DeviceClient {
 
 // ListFiles lists files in a directory on the remote device
 func (c *DeviceClient) ListFiles(path string) ([]server.FileInfo, error) {
-	url := fmt.Sprintf("%s/list?path=%s", c.baseURL, path)
-	resp, err := c.httpClient.Get(url)
+	reqURL := fmt.Sprintf("%s/list?path=%s", c.baseURL, url.QueryEscape(path))
+	resp, err := c.httpClient.Get(reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
@@ -55,8 +57,13 @@ func (c *DeviceClient) ListFiles(path string) ([]server.FileInfo, error) {
 // DownloadFile downloads a file from the remote device
 // progressChan receives progress updates (bytes downloaded)
 func (c *DeviceClient) DownloadFile(ctx context.Context, remotePath, localPath string, progressChan chan<- int64) error {
-	url := fmt.Sprintf("%s/files/%s", c.baseURL, remotePath)
-	resp, err := c.httpClient.Get(url)
+	// URL-encode each path segment to handle special characters while preserving path separators
+	segments := strings.Split(filepath.ToSlash(remotePath), "/")
+	for i, s := range segments {
+		segments[i] = url.PathEscape(s)
+	}
+	reqURL := fmt.Sprintf("%s/files/%s", c.baseURL, strings.Join(segments, "/"))
+	resp, err := c.httpClient.Get(reqURL)
 	if err != nil {
 		return fmt.Errorf("failed to start download: %w", err)
 	}

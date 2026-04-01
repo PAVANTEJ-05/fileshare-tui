@@ -71,6 +71,29 @@ func (app *App) setupUI() {
 		SetBorders(false).
 		SetSelectable(true, false).
 		SetFixed(1, 0)
+
+	// When the selection changes, highlight only the "Name" column cell with a white background
+	// and reset the previously highlighted cell. This gives a clear focused-cell look under Name.
+	prevSelectedRow := -1
+	app.fileBrowser.SetSelectionChangedFunc(func(row, column int) {
+		// reset previous row's Name cell
+		if prevSelectedRow > 0 {
+			if c := app.fileBrowser.GetCell(prevSelectedRow, 0); c != nil {
+				c.SetTextColor(tcell.ColorDefault)
+				c.SetBackgroundColor(tcell.ColorDefault)
+			}
+		}
+
+		// set current row's Name cell to white bg with black text (only for data rows)
+		if row > 0 {
+			if c := app.fileBrowser.GetCell(row, 0); c != nil {
+				c.SetTextColor(tcell.ColorBlack)
+				c.SetBackgroundColor(tcell.ColorWhite)
+			}
+		}
+
+		prevSelectedRow = row
+	})
 	app.fileBrowser.SetBorder(true).
 		SetTitle(" Files (not connected) ").
 		SetTitleAlign(tview.AlignLeft)
