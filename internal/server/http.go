@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -141,7 +142,7 @@ func (fs *FileServer) handleFile(w http.ResponseWriter, r *http.Request) {
 	// Ensure path is within shareDir
 	absShare, _ := filepath.Abs(fs.shareDir)
 	absPath, _ := filepath.Abs(fullPath)
-	if len(absPath) < len(absShare) || absPath[:len(absShare)] != absShare {
+	if !strings.HasPrefix(absPath, absShare) {
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return
 	}

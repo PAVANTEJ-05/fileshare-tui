@@ -79,15 +79,15 @@ func (app *App) setupUI() {
 		// reset previous row's Name cell
 		if prevSelectedRow > 0 {
 			if c := app.fileBrowser.GetCell(prevSelectedRow, 0); c != nil {
-				c.SetTextColor(tcell.ColorDefault)
-				c.SetBackgroundColor(tcell.ColorDefault)
+				c.SetTextColor(tcell.ColorWhite)
+				c.SetBackgroundColor(tcell.ColorBlack)
 			}
 		}
 
 		// set current row's Name cell to white bg with black text (only for data rows)
 		if row > 0 {
 			if c := app.fileBrowser.GetCell(row, 0); c != nil {
-				c.SetTextColor(tcell.ColorBlack)
+				c.SetTextColor(tcell.ColorDarkCyan)
 				c.SetBackgroundColor(tcell.ColorWhite)
 			}
 		}
@@ -354,7 +354,7 @@ func (app *App) loadFiles() {
 
 				app.fileBrowser.SetCell(row, 0,
 					tview.NewTableCell(fmt.Sprintf("%s%s", icon, file.Name)).
-						SetTextColor(tcell.ColorDefault))
+						SetTextColor(tcell.ColorDarkCyan))
 				app.fileBrowser.SetCell(row, 1,
 					tview.NewTableCell(formatSize(file.Size)))
 				app.fileBrowser.SetCell(row, 2,
